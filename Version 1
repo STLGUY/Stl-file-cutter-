@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STL Slicer Multi-Cut</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #1a1a1a; color: white; }
+        canvas { display: block; }
+        .glass-panel {
+            background: rgba(30, 30, 30, 0.90);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+        /* Custom Checkbox */
+        .toggle-checkbox:checked {
+            right: 0;
+            border-color: #68D391;
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background-color: #68D391;
+        }
+        
+        /* Custom Sliders */
+        input[type=range] { -webkit-appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 14px; width: 14px; border-radius: 50%; margin-top: -5px; cursor: pointer; border: 2px solid white; }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; border-radius: 2px; }
+        
+        /* Slider Colors */
+        #sliderZ::-webkit-slider-thumb { background: #3b82f6; } /* Blue */
+        #sliderZ::-webkit-slider-runnable-track { background: #1e3a8a; }
+        
+        #sliderX::-webkit-slider-thumb { background: #ef4444; } /* Red */
+        #sliderX::-webkit-slider-runnable-track { background: #7f1d1d; }
+
+        #sliderY::-webkit-slider-thumb { background: #22c55e; } /* Green */
+        #sliderY::-webkit-slider-runnable-track { background: #14532d; }
+
+        /* Scrollbar for download list */
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #2d3748; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 3px; }
+    </style>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+            "three-bvh-csg": "https://unpkg.com/three-bvh-csg@0.0.16/build/index.module.js",
+            "three-mesh-bvh": "https://unpkg.com/three-mesh-bvh@0.7.3/build/index.module.js"
+        }
+    }
+    </script>
+</head>
+<body class="font-sans antialiased">
+
+    <!-- Sidebar UI -->
+    <div class="absolute top-4 left-4 w-72 glass-panel rounded-xl p-4 z-10 flex flex-col gap-3 max-h-[90vh] flex">
+        
+        <!-- Header -->
+        <div class="flex-shrink-0">
+            <h1 class="text-lg font-bold text-white flex items-center gap-2">
+                <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm8.486-8.486a5 5 0 10-7.071 7.071 5 5 0 007.071-7.071z"></path></svg>
+                STL Slicer Multi
+            </h1>
+            <p class="text-[10px] text-gray-400 mt-1">Cut X, Y, and Z for up to 8 pieces.</p>
+        </div>
+
+        <!-- File Upload -->
+        <div class="relative group h-20 flex-shrink-0">
+            <input type="file" id="fileInput" accept=".stl" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20">
+            <div class="border-2 border-dashed border-gray-600 rounded-lg h-full flex items-center justify-center text-center group-hover:border-blue-500 transition-colors bg-gray-800/50">
+                <div id="uploadText" class="text-xs text-gray-300 px-2">
+                    <span class="block text-lg mb-1">📂</span>
+                    Click to Upload STL
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div id="controlsArea" class="hidden flex flex-col gap-3 flex-shrink-0">
+            
+            <!-- Axis Controls -->
+            <div class="flex flex-col gap-3">
+                
+                <!-- Z Axis (Blue) -->
+                <div class="bg-gray-800/50 rounded-lg p-2 border border-blue-900/50">
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="checkZ" checked class="w-3 h-3 rounded bg-gray-700 text-blue-500 focus:ring-0">
+                            <span class="text-xs font-bold text-blue-400">Z Cut (Height)</span>
+                        </label>
+                        <span id="valZ" class="text-[10px] font-mono text-gray-400">0.0</span>
+                    </div>
+                    <input type="range" id="sliderZ" disabled class="w-full opacity-50 transition-opacity">
+                </div>
+
+                <!-- X Axis (Red) -->
+                <div class="bg-gray-800/50 rounded-lg p-2 border border-red-900/50">
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="checkX" class="w-3 h-3 rounded bg-gray-700 text-red-500 focus:ring-0">
+                            <span class="text-xs font-bold text-red-400">X Cut (Width)</span>
+                        </label>
+                        <span id="valX" class="text-[10px] font-mono text-gray-400">0.0</span>
+                    </div>
+                    <input type="range" id="sliderX" disabled class="w-full opacity-50 transition-opacity">
+                </div>
+
+                <!-- Y Axis (Green) -->
+                <div class="bg-gray-800/50 rounded-lg p-2 border border-green-900/50">
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="checkY" class="w-3 h-3 rounded bg-gray-700 text-green-500 focus:ring-0">
+                            <span class="text-xs font-bold text-green-400">Y Cut (Depth)</span>
+                        </label>
+                        <span id="valY" class="text-[10px] font-mono text-gray-400">0.0</span>
+                    </div>
+                    <input type="range" id="sliderY" disabled class="w-full opacity-50 transition-opacity">
+                </div>
+            </div>
+
+            <button id="sliceBtn" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-4 rounded-lg shadow-lg flex justify-center items-center gap-2 text-xs transition-all">
+                <span>⚡ Slice All Parts</span>
+            </button>
+            
+            <div id="statusMsg" class="text-[10px] text-center text-gray-400 h-3 truncate"></div>
+        </div>
+
+        <!-- Downloads List -->
+        <div id="downloadArea" class="hidden flex-1 flex flex-col min-h-0 border-t border-gray-700 pt-2">
+            <p class="text-[10px] text-green-400 font-semibold mb-2 text-center">Generated Parts</p>
+            <div id="downloadList" class="overflow-y-auto custom-scroll flex flex-col gap-2 pr-1 h-32 flex-grow">
+                <!-- Buttons injected here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Processing Overlay -->
+    <div id="loadingOverlay" class="hidden fixed inset-0 bg-black/80 z-50 flex flex-col items-center justify-center pointer-events-none">
+        <div class="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+        <div class="text-white font-semibold text-lg">Processing Geometry...</div>
+        <div class="text-gray-400 text-sm mt-2 max-w-xs text-center">Performing multiple boolean cuts. This may take 10-20 seconds.</div>
+    </div>
+
+    <div id="canvas-container" class="w-full h-screen"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+        import { STLExporter } from 'three/addons/exporters/STLExporter.js';
+        import { Brush, Evaluator, INTERSECTION } from 'three-bvh-csg';
+
+        // --- Globals ---
+        let scene, camera, renderer, controls;
+        let mainMesh;
+        let planeGroup = { x: null, y: null, z: null };
+        let partsMeshes = []; 
+        let bounds = { min: new THREE.Vector3(), max: new THREE.Vector3(), size: new THREE.Vector3(), center: new THREE.Vector3() };
+        let geometryLoaded = false;
+        
+        // Stored Results
+        let generatedParts = []; // Array of { name: string, brush: Brush }
+
+        // UI Refs
+        const fileInput = document.getElementById('fileInput');
+        const uploadText = document.getElementById('uploadText');
+        const controlsArea = document.getElementById('controlsArea');
+        const downloadArea = document.getElementById('downloadArea');
+        const downloadList = document.getElementById('downloadList');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const statusMsg = document.getElementById('statusMsg');
+        const sliceBtn = document.getElementById('sliceBtn');
+
+        // Inputs
+        const inputs = {
+            x: { check: document.getElementById('checkX'), slider: document.getElementById('sliderX'), label: document.getElementById('valX') },
+            y: { check: document.getElementById('checkY'), slider: document.getElementById('sliderY'), label: document.getElementById('valY') },
+            z: { check: document.getElementById('checkZ'), slider: document.getElementById('sliderZ'), label: document.getElementById('valZ') }
+        };
+
+        init();
+        animate();
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+            
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x111111);
+            scene.add(new THREE.GridHelper(500, 50, 0x444444, 0x222222));
+            
+            // Lights
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+            const dl = new THREE.DirectionalLight(0xffffff, 1.5);
+            dl.position.set(100, 200, 100);
+            scene.add(dl);
+            scene.add(new THREE.DirectionalLight(0x5555ff, 0.5));
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 2000);
+            camera.position.set(150, 150, 200);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            container.appendChild(renderer.domElement);
+
+            // Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+
+            // --- Cut Planes Visuals ---
+            const planeGeo = new THREE.PlaneGeometry(1, 1);
+            
+            // Z Plane (Blue)
+            const matZ = new THREE.MeshPhongMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false });
+            planeGroup.z = new THREE.Mesh(planeGeo, matZ);
+            planeGroup.z.rotation.x = -Math.PI / 2;
+            
+            // X Plane (Red)
+            const matX = new THREE.MeshPhongMaterial({ color: 0xef4444, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false });
+            planeGroup.x = new THREE.Mesh(planeGeo, matX);
+            planeGroup.x.rotation.y = -Math.PI / 2;
+
+            // Y Plane (Green)
+            const matY = new THREE.MeshPhongMaterial({ color: 0x22c55e, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false });
+            planeGroup.y = new THREE.Mesh(planeGeo, matY);
+            // Y plane needs no rotation, it faces Z by default, wait... PlaneGeometry is XY.
+            // We want Y cut plane to be XZ plane. So normal is Y axis.
+            planeGroup.y.rotation.x = Math.PI / 2; 
+
+            scene.add(planeGroup.x);
+            scene.add(planeGroup.y);
+            scene.add(planeGroup.z);
+
+            hidePlanes();
+
+            // Listeners
+            window.addEventListener('resize', onWindowResize);
+            fileInput.addEventListener('change', handleFileUpload);
+            sliceBtn.addEventListener('click', performSlice);
+
+            // Input Listeners
+            ['x', 'y', 'z'].forEach(axis => {
+                inputs[axis].check.addEventListener('change', updateUIState);
+                inputs[axis].slider.addEventListener('input', updatePlanePositions);
+            });
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        function hidePlanes() {
+            planeGroup.x.visible = false;
+            planeGroup.y.visible = false;
+            planeGroup.z.visible = false;
+        }
+
+        // --- UI Logic ---
+
+        function updateUIState() {
+            if(!geometryLoaded) return;
+            
+            ['x', 'y', 'z'].forEach(axis => {
+                const enabled = inputs[axis].check.checked;
+                inputs[axis].slider.disabled = !enabled;
+                inputs[axis].slider.style.opacity = enabled ? "1" : "0.5";
+                planeGroup[axis].visible = enabled;
+            });
+            updatePlanePositions();
+        }
+
+        function updatePlanePositions() {
+            if(!geometryLoaded) return;
+            
+            // Update Z
+            const zVal = parseFloat(inputs.z.slider.value);
+            planeGroup.z.position.set(bounds.center.x, zVal, bounds.center.z);
+            inputs.z.label.innerText = zVal.toFixed(1);
+
+            // Update X
+            const xVal = parseFloat(inputs.x.slider.value);
+            planeGroup.x.position.set(xVal, bounds.center.y, bounds.center.z);
+            inputs.x.label.innerText = xVal.toFixed(1);
+
+            // Update Y
+            const yVal = parseFloat(inputs.y.slider.value);
+            planeGroup.y.position.set(bounds.center.x, bounds.center.y, yVal); // Correct Y position for a plane cutting the Y axis
+            // Correct rotation for Y plane: It should be parallel to XZ plane (Normal = Y)
+            // PlaneGeo default is XY. Rotate X by 90deg makes it XZ.
+            planeGroup.y.rotation.x = Math.PI/2; 
+            planeGroup.y.position.y = bounds.center.y; // Centered vertically relative to visual
+            planeGroup.y.position.z = yVal; // The "Y" depth value in ThreeJS is Z axis usually, or we need to be careful with coords.
+            // Standard STL: Z is UP. Y is Back. X is Right.
+            // So Y-Cut means plane at y = val.
+            planeGroup.y.position.set(bounds.center.x, yVal, bounds.center.z); // Wait. Z is UP in 3D printers.
+            // In ThreeJS default: Y is UP.
+            // STL Loader auto-orients? Usually STLs are Z-Up.
+            // Let's assume the user sees the model "Upright".
+            
+            // Re-evaluating Orientation based on `loadGeometryToScene`:
+            // I translated geometry so boundingBox.min.z aligns with 0. 
+            // This implies I treated Z as the vertical axis for the model logic.
+            // But ThreeJS renders Y as Up.
+            // Visual Plane Mapping:
+            // "Z Cut" (Height) -> ThreeJS Y axis.
+            // "X Cut" (Width)  -> ThreeJS X axis.
+            // "Y Cut" (Depth)  -> ThreeJS Z axis.
+            
+            // Fix Mappings:
+            planeGroup.z.position.y = zVal; // Height
+            planeGroup.x.position.x = xVal; // Width
+            planeGroup.y.position.z = yVal; // Depth
+            
+            inputs.x.label.innerText = xVal.toFixed(1);
+            inputs.y.label.innerText = yVal.toFixed(1);
+            inputs.z.label.innerText = zVal.toFixed(1);
+        }
+
+        // --- File Loading ---
+
+        function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            uploadText.innerHTML = `Loading...`;
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                try {
+                    const loader = new STLLoader();
+                    const geometry = loader.parse(event.target.result);
+                    setupModel(geometry, file.name);
+                } catch (err) {
+                    alert("Error parsing STL.");
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function setupModel(geometry, filename) {
+            if(mainMesh) { scene.remove(mainMesh); mainMesh.geometry.dispose(); }
+            partsMeshes.forEach(m => scene.remove(m));
+            partsMeshes = [];
+            downloadArea.classList.add('hidden');
+
+            // 1. Center & Orient
+            // We assume Z is UP in the STL file. We rotate it to match ThreeJS Y-UP.
+            geometry.computeBoundingBox();
+            
+            // Re-center geometry to origin for easier math
+            geometry.center(); 
+            
+            // Rotate -90 X to make Z-up models stand up in ThreeJS (Y-up)
+            geometry.rotateX(-Math.PI / 2);
+            geometry.computeBoundingBox();
+
+            // Lift so bottom is at Y=0
+            const yOffset = -geometry.boundingBox.min.y;
+            geometry.translate(0, yOffset, 0);
+            
+            geometry.computeBoundingBox();
+            
+            // 2. Material & Mesh
+            const material = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, roughness: 0.5, metalness: 0.1, flatShading: true });
+            mainMesh = new THREE.Mesh(geometry, material);
+            scene.add(mainMesh);
+
+            // 3. Store Bounds
+            bounds.min.copy(geometry.boundingBox.min);
+            bounds.max.copy(geometry.boundingBox.max);
+            bounds.size.subVectors(bounds.max, bounds.min);
+            geometry.boundingBox.getCenter(bounds.center);
+
+            // 4. Update UI Ranges
+            // X (Width)
+            inputs.x.slider.min = bounds.min.x; inputs.x.slider.max = bounds.max.x; inputs.x.slider.value = bounds.center.x;
+            
+            // Y (Height in ThreeJS, Z in STL) -> Z (Depth in ThreeJS)
+            // "Y Cut" in UI refers to Depth. In ThreeJS that is Z.
+            inputs.y.slider.min = bounds.min.z; inputs.y.slider.max = bounds.max.z; inputs.y.slider.value = bounds.center.z;
+            
+            // Z (Height in STL, Y in ThreeJS)
+            inputs.z.slider.min = bounds.min.y; inputs.z.slider.max = bounds.max.y; inputs.z.slider.value = bounds.center.y;
+
+            // 5. Update Plane Sizes
+            const maxDim = Math.max(bounds.size.x, bounds.size.y, bounds.size.z) * 2;
+            ['x','y','z'].forEach(k => planeGroup[k].scale.set(maxDim, maxDim, 1));
+
+            // 6. Finalize
+            geometryLoaded = true;
+            controlsArea.classList.remove('hidden');
+            uploadText.innerHTML = `<span class="text-indigo-400 font-bold">${filename}</span>`;
+            
+            // Reset state
+            inputs.z.check.checked = true;
+            inputs.x.check.checked = false;
+            inputs.y.check.checked = false;
+            updateUIState();
+            
+            // Camera
+            const dist = maxDim * 1.5;
+            camera.position.set(dist, dist, dist);
+            controls.target.copy(bounds.center);
+            controls.maxDistance = dist * 4;
+        }
+
+        // --- SLICING ENGINE ---
+
+        async function performSlice() {
+            if(!mainMesh) return;
+            loadingOverlay.classList.remove('hidden');
+            sliceBtn.disabled = true;
+            
+            // Yield to render UI
+            setTimeout(async () => {
+                try {
+                    const activeX = inputs.x.check.checked;
+                    const activeY = inputs.y.check.checked; // Z-axis in ThreeJS
+                    const activeZ = inputs.z.check.checked; // Y-axis in ThreeJS
+
+                    const valX = parseFloat(inputs.x.slider.value);
+                    const valY = parseFloat(inputs.y.slider.value); // Z val
+                    const valZ = parseFloat(inputs.z.slider.value); // Y val
+
+                    // CSG Setup
+                    const evaluator = new Evaluator();
+                    evaluator.attributes = ['position', 'normal'];
+                    const modelBrush = new Brush(mainMesh.geometry);
+                    modelBrush.updateMatrixWorld();
+
+                    generatedParts = [];
+
+                    // Define Ranges
+                    // X Ranges
+                    const xRanges = activeX ? [[-10000, valX, "Left"], [valX, 10000, "Right"]] : [[-10000, 10000, ""]];
+                    // Z Ranges (Depth/Y-Cut)
+                    const zRanges = activeY ? [[-10000, valY, "Back"], [valY, 10000, "Front"]] : [[-10000, 10000, ""]];
+                    // Y Ranges (Height/Z-Cut)
+                    const yRanges = activeZ ? [[-10000, valZ, "Bottom"], [valZ, 10000, "Top"]] : [[-10000, 10000, ""]];
+
+                    // Loop through all 1, 2, 4, or 8 combinations
+                    for (let xr of xRanges) {
+                        for (let zr of zRanges) {
+                            for (let yr of yRanges) {
+                                
+                                // Create Box for this octant
+                                // We use massive values for min/max to ensure we cover the model
+                                const w = (xr[1] - xr[0] === 20000) ? 20000 : (xr[1] - xr[0]);
+                                const h = (yr[1] - yr[0] === 20000) ? 20000 : (yr[1] - yr[0]);
+                                const d = (zr[1] - zr[0] === 20000) ? 20000 : (zr[1] - zr[0]);
+
+                                // Center of the box
+                                const cx = (xr[0] === -10000) ? bounds.min.x - 1000 : (xr[1] === 10000 ? bounds.max.x + 1000 : (xr[0] + xr[1])/2);
+                                // Logic refinement for robust large boxes:
+                                // Instead of calc center, let's just make a box that is GUARANTEED to cover the range
+                                // BoxGeometry is centered.
+                                
+                                const boxW = 10000;
+                                const boxH = 10000;
+                                const boxD = 10000;
+                                
+                                // Determine center based on split
+                                // If NO split, center is 0. 
+                                // If split at val, Left box center needs to be at val - (size/2).
+                                
+                                let bx = 0, by = 0, bz = 0;
+                                
+                                if (!activeX) bx = 0; 
+                                else bx = (xr[2] === "Left") ? valX - (boxW/2) : valX + (boxW/2);
+
+                                if (!activeZ) by = 0; // Height
+                                else by = (yr[2] === "Bottom") ? valZ - (boxH/2) : valZ + (boxH/2);
+
+                                if (!activeY) bz = 0; // Depth
+                                else bz = (zr[2] === "Back") ? valY - (boxD/2) : valY + (boxD/2);
+
+                                const cutterGeo = new THREE.BoxGeometry(boxW, boxH, boxD);
+                                const cutter = new Brush(cutterGeo);
+                                cutter.position.set(bx, by, bz);
+                                cutter.updateMatrixWorld();
+
+                                // Perform Intersection
+                                const result = evaluator.evaluate(modelBrush, cutter, INTERSECTION);
+                                
+                                // Check if result has geometry (volume > 0 approx)
+                                if (result.geometry.attributes.position.count > 0) {
+                                    // Construct Name
+                                    let nameParts = [yr[2], zr[2], xr[2]].filter(s => s !== "");
+                                    let name = nameParts.length > 0 ? nameParts.join("_") : "Full_Model";
+                                    
+                                    generatedParts.push({
+                                        name: name,
+                                        brush: result
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    displayResults();
+
+                } catch (e) {
+                    console.error(e);
+                    alert("Slicing Error: " + e.message);
+                } finally {
+                    loadingOverlay.classList.add('hidden');
+                    sliceBtn.disabled = false;
+                }
+            }, 100);
+        }
+
+        function displayResults() {
+            // 1. Visualize
+            mainMesh.visible = false;
+            hidePlanes();
+            
+            // Clear old parts
+            partsMeshes.forEach(m => scene.remove(m));
+            partsMeshes = [];
+
+            const colors = [0xef4444, 0x3b82f6, 0x22c55e, 0xf59e0b, 0x8b5cf6, 0xec4899, 0x06b6d4, 0x10b981];
+
+            generatedParts.forEach((part, idx) => {
+                const mat = new THREE.MeshStandardMaterial({ 
+                    color: colors[idx % colors.length], 
+                    roughness: 0.5, 
+                    metalness: 0.1 
+                });
+                const mesh = new THREE.Mesh(part.brush.geometry, mat);
+                
+                // Explode View: Move parts slightly away from center
+                const vec = new THREE.Vector3();
+                mesh.geometry.computeBoundingBox();
+                mesh.geometry.boundingBox.getCenter(vec);
+                const dir = vec.sub(bounds.center).normalize().multiplyScalar(5); // 5mm explode
+                mesh.position.copy(dir);
+                
+                scene.add(mesh);
+                partsMeshes.push(mesh);
+            });
+
+            // 2. Generate Buttons
+            downloadArea.classList.remove('hidden');
+            downloadList.innerHTML = ''; // Clear
+
+            generatedParts.forEach(part => {
+                const btn = document.createElement('button');
+                btn.className = "w-full text-left bg-gray-700 hover:bg-gray-600 border border-gray-600 text-gray-200 text-xs py-2 px-3 rounded flex justify-between items-center group";
+                btn.innerHTML = `
+                    <span>Part_${part.name}</span>
+                    <span class="opacity-0 group-hover:opacity-100">⬇️</span>
+                `;
+                btn.onclick = () => downloadSTL(part.brush, `Part_${part.name}`);
+                downloadList.appendChild(btn);
+            });
+            
+            statusMsg.innerText = `Generated ${generatedParts.length} parts.`;
+        }
+
+        function downloadSTL(brush, filename) {
+            statusMsg.innerText = "Generating " + filename + "...";
+            setTimeout(() => {
+                const exporter = new STLExporter();
+                const geo = brush.geometry.clone();
+                // Clean attributes
+                if(geo.attributes.uv) geo.deleteAttribute('uv');
+                if(geo.attributes.color) geo.deleteAttribute('color');
+                
+                const mesh = new THREE.Mesh(geo);
+                const result = exporter.parse(mesh, { binary: true });
+                const blob = new Blob([result], { type: 'model/stl' });
+                const link = document.createElement('a');
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.href = URL.createObjectURL(blob);
+                link.download = filename + ".stl";
+                link.click();
+                setTimeout(() => {
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(link.href);
+                    statusMsg.innerText = "Saved " + filename;
+                }, 1000);
+            }, 50);
+        }
+
+    </script>
+</body>
+</html>
+
+
