@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Large Model Slicer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f172a; color: white; }
+        canvas { display: block; }
+        
+        /* Glassmorphism Panel */
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.9);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Custom Inputs */
+        .input-dark {
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid rgba(71, 85, 105, 0.5);
+            color: #e2e8f0;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-family: monospace;
+            font-size: 11px;
+            transition: all 0.2s;
+        }
+        .input-dark:focus { outline: none; border-color: #6366f1; background: rgba(15, 23, 42, 1); }
+
+        /* Sliders */
+        input[type=range] { -webkit-appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { 
+            -webkit-appearance: none; height: 14px; width: 14px; 
+            border-radius: 50%; margin-top: -6px; cursor: pointer; 
+            background: #fff; border: 2px solid #4f46e5; box-shadow: 0 0 5px rgba(0,0,0,0.5); 
+        }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 3px; background: #334155; border-radius: 2px; }
+
+        /* Scrollbars */
+        .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        .custom-scroll::-webkit-scrollbar-thumb:hover { background: #64748b; }
+    </style>
+
+    <!-- ROBUST IMPORT MAP -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.168.0/examples/jsm/",
+            "three-mesh-bvh": "https://unpkg.com/three-mesh-bvh@0.7.3/build/index.module.js",
+            "three-bvh-csg": "https://unpkg.com/three-bvh-csg@0.0.17/build/index.module.js"
+        }
+    }
+    </script>
+</head>
+<body class="font-sans antialiased text-xs selection:bg-indigo-500 selection:text-white">
+
+    <!-- SIDEBAR -->
+    <div class="absolute top-4 left-4 w-72 glass-panel rounded-xl p-4 z-10 flex flex-col gap-4 max-h-[90vh] overflow-y-auto custom-scroll transition-all">
+        
+        <!-- Header -->
+        <div class="flex items-center justify-between">
+            <h1 class="font-bold text-base text-white flex items-center gap-2">
+                <span class="text-xl">✂️</span>
+                <span>Large Print Slicer</span>
+            </h1>
+            <div id="fileStatus" class="hidden px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 text-[10px] border border-green-500/30">Loaded</div>
+        </div>
+
+        <!-- 1. UPLOAD -->
+        <div class="relative group h-16 flex-shrink-0">
+            <input type="file" id="fileInput" accept=".stl" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20">
+            <div class="border-2 border-dashed border-slate-600 rounded-lg h-full flex flex-col items-center justify-center text-center group-hover:border-indigo-500 group-hover:bg-slate-800/50 transition-all bg-slate-900/30">
+                <span class="text-indigo-400 font-semibold mb-0.5">Upload STL File</span>
+                <span id="fileNameDisplay" class="text-[10px] text-slate-400 max-w-[90%] truncate">Click to browse</span>
+            </div>
+        </div>
+
+        <!-- 2. ORIENTATION -->
+        <div id="orientationSection" class="hidden flex flex-col gap-2 p-3 bg-slate-900/40 rounded-lg border border-white/5">
+            <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex justify-between">
+                <span>Align Model</span>
+                <button id="resetViewBtn" class="text-indigo-400 hover:text-white transition-colors">Reset View</button>
+            </div>
+            <div class="grid grid-cols-3 gap-1">
+                <button id="rotX" class="bg-slate-800 hover:bg-slate-700 text-slate-200 py-1.5 rounded border border-slate-700 transition-colors">Rotate X</button>
+                <button id="rotY" class="bg-slate-800 hover:bg-slate-700 text-slate-200 py-1.5 rounded border border-slate-700 transition-colors">Rotate Y</button>
+                <button id="rotZ" class="bg-slate-800 hover:bg-slate-700 text-slate-200 py-1.5 rounded border border-slate-700 transition-colors">Rotate Z</button>
+            </div>
+        </div>
+
+        <!-- 3. RESIZE -->
+        <div id="resizeSection" class="hidden flex flex-col gap-2 p-3 bg-slate-900/40 rounded-lg border border-white/5">
+            <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Scale / Target Size</div>
+            <div class="text-[10px] text-slate-500 font-mono mb-1 flex justify-between">
+                <span>Current Height:</span>
+                <span id="currHeightDisplay" class="text-slate-200">0 mm</span>
+            </div>
+            <div class="flex gap-2 items-end">
+                <div class="flex-1">
+                    <label class="text-[9px] text-slate-500 block mb-1">Target Height</label>
+                    <input type="number" id="targetHeight" class="input-dark w-full" placeholder="0">
+                </div>
+                <div class="w-16">
+                    <label class="text-[9px] text-slate-500 block mb-1">Unit</label>
+                    <select id="targetUnit" class="input-dark w-full h-[26px] py-0 px-1 cursor-pointer">
+                        <option value="mm">mm</option>
+                        <option value="cm">cm</option>
+                        <option value="in">in</option>
+                        <option value="ft">ft</option>
+                    </select>
+                </div>
+                <button id="applyScaleBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold px-3 py-1.5 rounded h-[26px] transition-colors shadow-lg">Resize</button>
+            </div>
+            <div id="resizeStatus" class="text-[9px] text-green-400 text-right hidden">✅ Scaled</div>
+        </div>
+
+        <!-- 4. SLICING CONTROLS -->
+        <div id="sliceControls" class="hidden flex flex-col gap-3">
+            
+            <!-- Tabs -->
+            <div class="grid grid-cols-2 gap-1 p-1 bg-slate-900/50 rounded-lg">
+                <button id="tabAuto" class="bg-indigo-600 text-white py-1.5 rounded text-[11px] font-bold transition-all">Auto Sections</button>
+                <button id="tabManual" class="bg-transparent text-slate-400 hover:bg-slate-800 py-1.5 rounded text-[11px] font-bold transition-all">Manual Cut</button>
+            </div>
+
+            <!-- AUTO MODE UI -->
+            <div id="uiAuto" class="flex flex-col gap-3">
+                <div class="text-[10px] text-slate-400">Scale the model above, set printer size below.</div>
+                
+                <!-- Sub-Mode Toggle -->
+                <div class="flex text-[10px] border border-slate-700 rounded overflow-hidden">
+                    <button id="subModePrinter" class="flex-1 py-1 bg-indigo-600 text-white transition-colors">By Printer Size</button>
+                    <button id="subModeCount" class="flex-1 py-1 bg-slate-800 text-slate-400 hover:text-white transition-colors">By Count</button>
+                </div>
+
+                <!-- Input: Printer Size -->
+                <div id="inputsPrinter" class="grid grid-cols-3 gap-2">
+                    <div>
+                        <label class="text-[9px] text-red-400 font-bold block mb-1">Print X</label>
+                        <input type="number" id="printX" value="220" class="input-dark w-full">
+                    </div>
+                    <div>
+                        <label class="text-[9px] text-green-400 font-bold block mb-1">Print Y</label>
+                        <input type="number" id="printY" value="220" class="input-dark w-full">
+                    </div>
+                    <div>
+                        <label class="text-[9px] text-blue-400 font-bold block mb-1">Print Z</label>
+                        <input type="number" id="printZ" value="250" class="input-dark w-full">
+                    </div>
+                </div>
+
+                <!-- Input: Split Count -->
+                <div id="inputsCount" class="hidden grid grid-cols-3 gap-2">
+                    <div>
+                        <label class="text-[9px] text-red-400 font-bold block mb-1">Cuts X</label>
+                        <input type="number" id="splitX" value="1" min="1" max="10" class="input-dark w-full">
+                    </div>
+                    <div>
+                        <label class="text-[9px] text-green-400 font-bold block mb-1">Cuts Y</label>
+                        <input type="number" id="splitY" value="1" min="1" max="10" class="input-dark w-full">
+                    </div>
+                    <div>
+                        <label class="text-[9px] text-blue-400 font-bold block mb-1">Cuts Z</label>
+                        <input type="number" id="splitZ" value="2" min="1" max="10" class="input-dark w-full">
+                    </div>
+                </div>
+
+                <!-- Preview Info -->
+                <div class="bg-indigo-500/10 border border-indigo-500/20 rounded p-2 flex items-center gap-3">
+                    <div class="text-2xl">📦</div>
+                    <div>
+                        <div class="text-[10px] text-indigo-200 font-bold">Estimated Result</div>
+                        <div id="gridPreviewText" class="text-[10px] text-indigo-100 font-mono">2 parts total</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MANUAL MODE UI -->
+            <div id="uiManual" class="hidden flex flex-col gap-3">
+                <div class="space-y-3">
+                    <!-- Z Slider -->
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                <input type="checkbox" id="checkZ" checked class="accent-blue-500">
+                                <span class="font-bold text-blue-400">Height Cut (Z)</span>
+                            </label>
+                            <span id="valZ" class="font-mono text-slate-400">0.0</span>
+                        </div>
+                        <input type="range" id="sliderZ" disabled class="block w-full opacity-50">
+                    </div>
+                    
+                    <!-- X Slider -->
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                <input type="checkbox" id="checkX" class="accent-red-500">
+                                <span class="font-bold text-red-400">Width Cut (X)</span>
+                            </label>
+                            <span id="valX" class="font-mono text-slate-400">0.0</span>
+                        </div>
+                        <input type="range" id="sliderX" disabled class="block w-full opacity-50">
+                    </div>
+
+                    <!-- Y Slider -->
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                <input type="checkbox" id="checkY" class="accent-green-500">
+                                <span class="font-bold text-green-400">Depth Cut (Y)</span>
+                            </label>
+                            <span id="valY" class="font-mono text-slate-400">0.0</span>
+                        </div>
+                        <input type="range" id="sliderY" disabled class="block w-full opacity-50">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Button -->
+            <button id="sliceBtn" class="mt-2 w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg flex justify-center items-center gap-2 transition-all transform hover:scale-[1.02]">
+                <span class="text-lg">⚡</span>
+                <span>Slice Model</span>
+            </button>
+            <div id="statusText" class="text-center text-[10px] text-slate-500 h-4">Ready to slice</div>
+        </div>
+    </div>
+
+    <!-- BOTTOM DOCK (Downloads) -->
+    <div id="downloadDock" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-20 w-full max-w-4xl px-4 flex flex-col items-center gap-3 transition-all duration-500 translate-y-32 opacity-0">
+        <div class="bg-indigo-600 text-white px-4 py-1 rounded-full text-[11px] font-bold shadow-lg border border-indigo-400 flex items-center gap-2">
+            <span>✅ Slicing Complete</span>
+            <span class="w-1 h-4 bg-indigo-400 rounded-full"></span>
+            <span id="partCountLabel">0 Parts Generated</span>
+        </div>
+        <div id="downloadButtons" class="glass-panel rounded-2xl p-3 flex gap-3 overflow-x-auto custom-scroll w-full max-w-full justify-center min-h-[90px] items-center">
+            <!-- Buttons go here -->
+        </div>
+    </div>
+
+    <!-- LOADING OVERLAY -->
+    <div id="loader" class="fixed inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center hidden">
+        <div class="relative w-16 h-16">
+            <div class="absolute inset-0 border-4 border-indigo-500/30 rounded-full"></div>
+            <div class="absolute inset-0 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+        </div>
+        <div class="mt-4 text-white font-bold text-lg tracking-wide">Processing Geometry</div>
+        <div class="text-slate-400 text-xs mt-1">Calculating intersections...</div>
+    </div>
+
+    <!-- 3D CANVAS -->
+    <div id="canvas-container" class="w-full h-screen"></div>
+
+    <!-- APP LOGIC -->
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+        import { STLExporter } from 'three/addons/exporters/STLExporter.js';
+        import { Brush, Evaluator, INTERSECTION } from 'three-bvh-csg';
+
+        // --- STATE & CONFIG ---
+        const state = {
+            mode: 'auto', // 'auto' or 'manual'
+            subMode: 'printer', // 'printer' or 'count'
+            bounds: null,
+            loaded: false,
+            helpers: [], // Array of visual plane meshes
+            originalGeo: null // Store original geometry for non-destructive scaling
+        };
+
+        // --- UI ELEMENTS ---
+        const ui = {
+            fileInput: document.getElementById('fileInput'),
+            fileName: document.getElementById('fileNameDisplay'),
+            orientSec: document.getElementById('orientationSection'),
+            resizeSec: document.getElementById('resizeSection'),
+            sliceSec: document.getElementById('sliceControls'),
+            uiAuto: document.getElementById('uiAuto'),
+            uiManual: document.getElementById('uiManual'),
+            tabAuto: document.getElementById('tabAuto'),
+            tabManual: document.getElementById('tabManual'),
+            subPrinter: document.getElementById('subModePrinter'),
+            subCount: document.getElementById('subModeCount'),
+            inputsPrinter: document.getElementById('inputsPrinter'),
+            inputsCount: document.getElementById('inputsCount'),
+            gridText: document.getElementById('gridPreviewText'),
+            sliceBtn: document.getElementById('sliceBtn'),
+            status: document.getElementById('statusText'),
+            dock: document.getElementById('downloadDock'),
+            dockList: document.getElementById('downloadButtons'),
+            loader: document.getElementById('loader'),
+            currHeight: document.getElementById('currHeightDisplay'),
+            scaleInputs: {
+                height: document.getElementById('targetHeight'),
+                unit: document.getElementById('targetUnit'),
+                btn: document.getElementById('applyScaleBtn'),
+                status: document.getElementById('resizeStatus')
+            },
+            inputs: {
+                manual: {
+                    x: { check: document.getElementById('checkX'), slider: document.getElementById('sliderX'), val: document.getElementById('valX') },
+                    y: { check: document.getElementById('checkY'), slider: document.getElementById('sliderY'), val: document.getElementById('valY') },
+                    z: { check: document.getElementById('checkZ'), slider: document.getElementById('sliderZ'), val: document.getElementById('valZ') }
+                },
+                auto: {
+                    px: document.getElementById('printX'), py: document.getElementById('printY'), pz: document.getElementById('printZ'),
+                    cx: document.getElementById('splitX'), cy: document.getElementById('splitY'), cz: document.getElementById('splitZ')
+                }
+            }
+        };
+
+        // --- 3D SCENE GLOBALS ---
+        let scene, camera, renderer, controls, mainMesh;
+
+        init();
+        animate();
+
+        function init() {
+            // Setup Three.js
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0f172a); 
+            
+            // Nice Grid
+            const grid = new THREE.GridHelper(5000, 200, 0x1e293b, 0x0f172a);
+            scene.add(grid);
+
+            // Lighting
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+            const dl = new THREE.DirectionalLight(0xffffff, 1.2);
+            dl.position.set(200, 500, 200);
+            scene.add(dl);
+            const backLight = new THREE.DirectionalLight(0x6366f1, 0.5); // Indigo backlight
+            backLight.position.set(-200, 100, -200);
+            scene.add(backLight);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 20000);
+            camera.position.set(300, 300, 400);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            container.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize);
+            ui.fileInput.addEventListener('change', handleUpload);
+            
+            // Rotation Buttons
+            document.getElementById('rotX').onclick = () => rotateMesh('x');
+            document.getElementById('rotY').onclick = () => rotateMesh('y');
+            document.getElementById('rotZ').onclick = () => rotateMesh('z');
+            document.getElementById('resetViewBtn').onclick = resetView;
+
+            // Scale Button
+            ui.scaleInputs.btn.onclick = applyScale;
+
+            // Tab Switching
+            ui.tabAuto.onclick = () => switchMode('auto');
+            ui.tabManual.onclick = () => switchMode('manual');
+            ui.subPrinter.onclick = () => switchSubMode('printer');
+            ui.subCount.onclick = () => switchSubMode('count');
+
+            // Input Changes (Live Preview)
+            // Manual
+            ['x','y','z'].forEach(k => {
+                ui.inputs.manual[k].slider.addEventListener('input', updateVisuals);
+                ui.inputs.manual[k].check.addEventListener('change', updateVisuals);
+            });
+            // Auto
+            Object.values(ui.inputs.auto).forEach(inp => inp.addEventListener('input', updateVisuals));
+
+            // Slicing
+            ui.sliceBtn.onclick = performSlice;
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // --- FILE HANDLING ---
+        function handleUpload(e) {
+            const file = e.target.files[0];
+            if(!file) return;
+            
+            ui.fileName.innerText = "Loading " + file.name + "...";
+            ui.fileName.classList.add("text-indigo-400");
+            
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                try {
+                    const loader = new STLLoader();
+                    const geo = loader.parse(evt.target.result);
+                    loadModel(geo, file.name);
+                } catch(err) {
+                    alert("Error parsing STL file. Ensure it is a valid binary/ascii STL.");
+                    ui.fileName.innerText = "Error loading file";
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function loadModel(geo, name) {
+            if(mainMesh) { scene.remove(mainMesh); mainMesh.geometry.dispose(); }
+            // Clean previous cuts
+            state.helpers.forEach(h => scene.remove(h));
+            state.helpers = [];
+            hideDock();
+
+            // Store original
+            // Rotate X -90 (Standard STL fix for Z-up)
+            geo.rotateX(-Math.PI/2);
+            geo.computeBoundingBox();
+            geo.center();
+            geo.computeBoundingBox();
+            geo.translate(0, -geo.boundingBox.min.y, 0);
+            
+            state.originalGeo = geo.clone(); // Save for scaling
+
+            const mat = new THREE.MeshStandardMaterial({ 
+                color: 0x94a3b8, // Slate 400
+                roughness: 0.6,
+                metalness: 0.2,
+                flatShading: true
+            });
+            
+            mainMesh = new THREE.Mesh(geo, mat);
+            scene.add(mainMesh);
+            state.loaded = true;
+
+            // UI Updates
+            ui.fileName.innerText = name;
+            document.getElementById('fileStatus').classList.remove('hidden');
+            ui.orientSec.classList.remove('hidden');
+            ui.resizeSec.classList.remove('hidden');
+            ui.sliceSec.classList.remove('hidden');
+            ui.scaleInputs.status.classList.add('hidden');
+
+            updateBounds();
+            resetView();
+            updateVisuals();
+        }
+
+        function updateBounds() {
+            if(!mainMesh) return;
+            const geo = mainMesh.geometry;
+            geo.computeBoundingBox();
+            const b = geo.boundingBox;
+            const size = new THREE.Vector3();
+            b.getSize(size);
+            const center = new THREE.Vector3();
+            b.getCenter(center);
+
+            state.bounds = { min: b.min, max: b.max, size: size, center: center };
+
+            // Update UI Text
+            ui.currHeight.innerText = `${size.y.toFixed(1)} mm`;
+
+            // Update Manual Sliders
+            const s = ui.inputs.manual;
+            s.x.slider.min = b.min.x; s.x.slider.max = b.max.x; s.x.slider.value = center.x;
+            s.y.slider.min = b.min.z; s.y.slider.max = b.max.z; s.y.slider.value = center.z; // Y in UI is Z in 3JS
+            s.z.slider.min = b.min.y; s.z.slider.max = b.max.y; s.z.slider.value = center.y;
+        }
+
+        function rotateMesh(axis) {
+            if(!mainMesh) return;
+            if(axis === 'x') mainMesh.geometry.rotateX(Math.PI/2);
+            if(axis === 'y') mainMesh.geometry.rotateY(Math.PI/2);
+            if(axis === 'z') mainMesh.geometry.rotateZ(Math.PI/2);
+            
+            // Re-center on floor
+            mainMesh.geometry.computeBoundingBox();
+            mainMesh.geometry.center();
+            mainMesh.geometry.computeBoundingBox();
+            mainMesh.geometry.translate(0, -mainMesh.geometry.boundingBox.min.y, 0);
+            
+            // Update originalGeo to match new orientation
+            state.originalGeo = mainMesh.geometry.clone();
+
+            updateBounds();
+            updateVisuals();
+        }
+
+        function applyScale() {
+            if(!state.originalGeo || !mainMesh) return;
+            
+            const val = parseFloat(ui.scaleInputs.height.value);
+            if(!val || val <= 0) { alert("Enter a valid height"); return; }
+            
+            const unit = ui.scaleInputs.unit.value;
+            let targetMM = val;
+            
+            if(unit === 'cm') targetMM = val * 10;
+            if(unit === 'in') targetMM = val * 25.4;
+            if(unit === 'ft') targetMM = val * 304.8;
+            
+            // Calculate Scale Factor based on Original Geo
+            state.originalGeo.computeBoundingBox();
+            const currentH = state.originalGeo.boundingBox.max.y - state.originalGeo.boundingBox.min.y;
+            const scale = targetMM / currentH;
+            
+            // Apply to new geometry
+            const newGeo = state.originalGeo.clone();
+            newGeo.scale(scale, scale, scale);
+            
+            // Fix position (floor)
+            newGeo.computeBoundingBox();
+            newGeo.translate(0, -newGeo.boundingBox.min.y, 0);
+            
+            mainMesh.geometry.dispose();
+            mainMesh.geometry = newGeo;
+            
+            ui.scaleInputs.status.classList.remove('hidden');
+            setTimeout(() => ui.scaleInputs.status.classList.add('hidden'), 2000);
+            
+            updateBounds();
+            updateVisuals();
+            resetView(); 
+        }
+
+        function resetView() {
+            if(!state.bounds) return;
+            const maxDim = Math.max(state.bounds.size.x, state.bounds.size.y, state.bounds.size.z);
+            const dist = maxDim * 2.0;
+            camera.position.set(dist, dist, dist);
+            controls.target.copy(state.bounds.center);
+            controls.update();
+        }
+
+        // --- UI LOGIC ---
+        function switchMode(m) {
+            state.mode = m;
+            if(m === 'auto') {
+                ui.tabAuto.className = "bg-indigo-600 text-white py-1.5 rounded text-[11px] font-bold transition-all";
+                ui.tabManual.className = "bg-transparent text-slate-400 hover:bg-slate-800 py-1.5 rounded text-[11px] font-bold transition-all";
+                ui.uiAuto.classList.remove('hidden');
+                ui.uiManual.classList.add('hidden');
+            } else {
+                ui.tabAuto.className = "bg-transparent text-slate-400 hover:bg-slate-800 py-1.5 rounded text-[11px] font-bold transition-all";
+                ui.tabManual.className = "bg-indigo-600 text-white py-1.5 rounded text-[11px] font-bold transition-all";
+                ui.uiAuto.classList.add('hidden');
+                ui.uiManual.classList.remove('hidden');
+            }
+            updateVisuals();
+        }
+
+        function switchSubMode(m) {
+            state.subMode = m;
+            if(m === 'printer') {
+                ui.subPrinter.className = "flex-1 py-1 bg-indigo-600 text-white transition-colors";
+                ui.subCount.className = "flex-1 py-1 bg-slate-800 text-slate-400 hover:text-white transition-colors";
+                ui.inputsPrinter.classList.remove('hidden');
+                ui.inputsCount.classList.add('hidden');
+            } else {
+                ui.subPrinter.className = "flex-1 py-1 bg-slate-800 text-slate-400 hover:text-white transition-colors";
+                ui.subCount.className = "flex-1 py-1 bg-indigo-600 text-white transition-colors";
+                ui.inputsPrinter.classList.add('hidden');
+                ui.inputsCount.classList.remove('hidden');
+            }
+            updateVisuals();
+        }
+
+        // --- VISUALIZATION ---
+        function updateVisuals() {
+            if(!state.loaded) return;
+
+            // 1. Clear old
+            state.helpers.forEach(h => scene.remove(h));
+            state.helpers = [];
+
+            // 2. Calculate Cuts
+            let cutsX = [], cutsY = [], cutsZ = []; 
+            
+            if(state.mode === 'manual') {
+                const m = ui.inputs.manual;
+                m.x.slider.disabled = !m.x.check.checked; m.x.slider.style.opacity = m.x.check.checked ? 1 : 0.5;
+                m.y.slider.disabled = !m.y.check.checked; m.y.slider.style.opacity = m.y.check.checked ? 1 : 0.5;
+                m.z.slider.disabled = !m.z.check.checked; m.z.slider.style.opacity = m.z.check.checked ? 1 : 0.5;
+
+                m.x.val.innerText = m.x.check.checked ? parseFloat(m.x.slider.value).toFixed(1) : "OFF";
+                m.y.val.innerText = m.y.check.checked ? parseFloat(m.y.slider.value).toFixed(1) : "OFF";
+                m.z.val.innerText = m.z.check.checked ? parseFloat(m.z.slider.value).toFixed(1) : "OFF";
+
+                if(m.x.check.checked) cutsX.push(parseFloat(m.x.slider.value));
+                if(m.y.check.checked) cutsY.push(parseFloat(m.y.slider.value));
+                if(m.z.check.checked) cutsZ.push(parseFloat(m.z.slider.value));
+            } else {
+                // Auto Mode
+                if(state.subMode === 'printer') {
+                    // Logic: Printer Size
+                    const pX = parseFloat(ui.inputs.auto.px.value) || 200;
+                    const pY = parseFloat(ui.inputs.auto.py.value) || 200;
+                    const pZ = parseFloat(ui.inputs.auto.pz.value) || 200;
+
+                    const cX = Math.ceil(state.bounds.size.x / pX);
+                    const cY = Math.ceil(state.bounds.size.z / pY); // Depth
+                    const cZ = Math.ceil(state.bounds.size.y / pZ); // Height
+
+                    for(let i=1; i<cX; i++) cutsX.push(state.bounds.min.x + (i * (state.bounds.size.x / cX)));
+                    for(let i=1; i<cY; i++) cutsY.push(state.bounds.min.z + (i * (state.bounds.size.z / cY)));
+                    for(let i=1; i<cZ; i++) cutsZ.push(state.bounds.min.y + (i * (state.bounds.size.y / cZ)));
+
+                    ui.gridText.innerText = `${cX}x${cY}x${cZ} Grid (${cX*cY*cZ} Parts)`;
+                } else {
+                    // Logic: Count
+                    const cX = parseInt(ui.inputs.auto.cx.value) || 1;
+                    const cY = parseInt(ui.inputs.auto.cy.value) || 1;
+                    const cZ = parseInt(ui.inputs.auto.cz.value) || 1;
+
+                    for(let i=1; i<cX; i++) cutsX.push(state.bounds.min.x + (i * (state.bounds.size.x / cX)));
+                    for(let i=1; i<cY; i++) cutsY.push(state.bounds.min.z + (i * (state.bounds.size.z / cY)));
+                    for(let i=1; i<cZ; i++) cutsZ.push(state.bounds.min.y + (i * (state.bounds.size.y / cZ)));
+
+                    ui.gridText.innerText = `${cX}x${cY}x${cZ} Grid (${cX*cY*cZ} Parts)`;
+                }
+            }
+
+            // 3. Draw Planes
+            const drawP = (axis, val, color) => {
+                const sz = Math.max(state.bounds.size.x, state.bounds.size.y, state.bounds.size.z) * 1.5;
+                const geo = new THREE.PlaneGeometry(sz, sz);
+                const mat = new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide, transparent: true, opacity: 0.15, depthWrite: false });
+                const mesh = new THREE.Mesh(geo, mat);
+                const edge = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: color, transparent: true, opacity: 0.5 }));
+                mesh.add(edge);
+
+                if(axis === 'x') {
+                    mesh.rotation.y = Math.PI/2;
+                    mesh.position.set(val, state.bounds.center.y, state.bounds.center.z);
+                } else if(axis === 'y') { // Depth (Z in 3js)
+                    mesh.position.set(state.bounds.center.x, state.bounds.center.y, val);
+                } else { // Height
+                    mesh.rotation.x = Math.PI/2;
+                    mesh.position.set(state.bounds.center.x, val, state.bounds.center.z);
+                }
+                scene.add(mesh);
+                state.helpers.push(mesh);
+            };
+
+            cutsX.forEach(v => drawP('x', v, 0xf87171)); // Red
+            cutsY.forEach(v => drawP('y', v, 0x4ade80)); // Green
+            cutsZ.forEach(v => drawP('z', v, 0x60a5fa)); // Blue
+        }
+
+        // --- SLICING ENGINE ---
+        async function performSlice() {
+            if(!mainMesh) return;
+            ui.loader.classList.remove('hidden');
+            ui.sliceBtn.disabled = true;
+
+            await new Promise(r => setTimeout(r, 100));
+
+            try {
+                let cutsX = [], cutsY = [], cutsZ = [];
+                
+                if(state.mode === 'manual') {
+                    const m = ui.inputs.manual;
+                    if(m.x.check.checked) cutsX.push(parseFloat(m.x.slider.value));
+                    if(m.y.check.checked) cutsY.push(parseFloat(m.y.slider.value));
+                    if(m.z.check.checked) cutsZ.push(parseFloat(m.z.slider.value));
+                } else {
+                    const b = state.bounds;
+                    let cX=1, cY=1, cZ=1;
+                    if(state.subMode === 'printer') {
+                        cX = Math.ceil(b.size.x / (parseFloat(ui.inputs.auto.px.value)||200));
+                        cY = Math.ceil(b.size.z / (parseFloat(ui.inputs.auto.py.value)||200));
+                        cZ = Math.ceil(b.size.y / (parseFloat(ui.inputs.auto.pz.value)||200));
+                    } else {
+                        cX = parseInt(ui.inputs.auto.cx.value)||1;
+                        cY = parseInt(ui.inputs.auto.cy.value)||1;
+                        cZ = parseInt(ui.inputs.auto.cz.value)||1;
+                    }
+                    for(let i=1; i<cX; i++) cutsX.push(b.min.x + (i*(b.size.x/cX)));
+                    for(let i=1; i<cY; i++) cutsY.push(b.min.z + (i*(b.size.z/cY)));
+                    for(let i=1; i<cZ; i++) cutsZ.push(b.min.y + (i*(b.size.y/cZ)));
+                }
+
+                cutsX.sort((a,b)=>a-b); cutsY.sort((a,b)=>a-b); cutsZ.sort((a,b)=>a-b);
+                const rX = [state.bounds.min.x - 1, ...cutsX, state.bounds.max.x + 1];
+                const rY = [state.bounds.min.z - 1, ...cutsY, state.bounds.max.z + 1]; 
+                const rZ = [state.bounds.min.y - 1, ...cutsZ, state.bounds.max.y + 1]; 
+
+                const evaluator = new Evaluator();
+                evaluator.attributes = ['position', 'normal'];
+                const modelBrush = new Brush(mainMesh.geometry);
+                modelBrush.updateMatrixWorld();
+
+                const results = [];
+                const total = (rX.length-1)*(rY.length-1)*(rZ.length-1);
+                if(total > 30) { if(!confirm(`This will create ${total} parts. Continue?`)) throw "Cancelled"; }
+
+                for(let i=0; i<rX.length-1; i++) {
+                    for(let j=0; j<rY.length-1; j++) {
+                        for(let k=0; k<rZ.length-1; k++) {
+                            const w = rX[i+1]-rX[i], d = rY[j+1]-rY[j], h = rZ[k+1]-rZ[k];
+                            const cutter = new Brush(new THREE.BoxGeometry(w, h, d));
+                            cutter.position.set(rX[i]+w/2, rZ[k]+h/2, rY[j]+d/2);
+                            cutter.updateMatrixWorld();
+
+                            const res = evaluator.evaluate(modelBrush, cutter, INTERSECTION);
+                            if(res.geometry.attributes.position.count > 0) {
+                                results.push({ name: `Part_${i+1}-${j+1}-${k+1}`, brush: res });
+                            }
+                        }
+                    }
+                }
+
+                showResults(results);
+
+            } catch(e) {
+                console.error(e);
+                alert("Slicing Failed: " + e);
+            } finally {
+                ui.loader.classList.add('hidden');
+                ui.sliceBtn.disabled = false;
+            }
+        }
+
+        function showResults(parts) {
+            mainMesh.visible = false;
+            state.helpers.forEach(h => h.visible = false);
+            if(window.partsMeshes) window.partsMeshes.forEach(m => scene.remove(m));
+            window.partsMeshes = [];
+
+            const colors = [0xef4444, 0x3b82f6, 0x22c55e, 0xf59e0b, 0x8b5cf6, 0xec4899];
+            
+            parts.forEach((p, idx) => {
+                const mat = new THREE.MeshStandardMaterial({ 
+                    color: colors[idx % colors.length], 
+                    roughness: 0.5, metalness: 0.1 
+                });
+                const mesh = new THREE.Mesh(p.brush.geometry, mat);
+                const center = new THREE.Vector3();
+                mesh.geometry.computeBoundingBox();
+                mesh.geometry.boundingBox.getCenter(center);
+                const dir = center.sub(state.bounds.center).normalize().multiplyScalar(15);
+                mesh.position.copy(dir);
+                scene.add(mesh);
+                window.partsMeshes.push(mesh);
+            });
+
+            showDock(parts);
+        }
+
+        function showDock(parts) {
+            ui.dockList.innerHTML = '';
+            document.getElementById('partCountLabel').innerText = `${parts.length} Parts Generated`;
+            parts.forEach(p => {
+                const btn = document.createElement('button');
+                btn.className = "flex-shrink-0 bg-slate-800 hover:bg-indigo-600 border border-slate-600 hover:border-indigo-400 text-white p-2 rounded-lg flex flex-col items-center gap-1 transition-all group min-w-[80px]";
+                btn.innerHTML = `<span class="text-xl group-hover:scale-110 transition-transform">💾</span><span class="text-[10px] font-bold">${p.name}</span>`;
+                btn.onclick = () => downloadSTL(p.brush, p.name);
+                ui.dockList.appendChild(btn);
+            });
+            ui.dock.classList.remove('translate-y-32', 'opacity-0');
+        }
+
+        function hideDock() {
+            ui.dock.classList.add('translate-y-32', 'opacity-0');
+        }
+
+        function downloadSTL(brush, name) {
+            const exporter = new STLExporter();
+            const geo = brush.geometry.clone();
+            if(geo.attributes.uv) geo.deleteAttribute('uv');
+            if(geo.attributes.color) geo.deleteAttribute('color');
+            const result = exporter.parse(new THREE.Mesh(geo), { binary: true });
+            const blob = new Blob([result], { type: 'model/stl' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = name + ".stl";
+            link.click();
+        }
+
+    </script>
+</body>
+</html>
+
+
