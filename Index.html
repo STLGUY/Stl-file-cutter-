@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Large Model Slicer (Debug)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f172a; color: white; }
+        canvas { display: block; }
+        .glass-panel { background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5); }
+        .input-dark { background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(71, 85, 105, 0.5); color: #e2e8f0; border-radius: 4px; padding: 4px 8px; font-size: 11px; }
+        .input-dark:focus { outline: none; border-color: #6366f1; background: rgba(30, 41, 59, 1); }
+        input[type=range] { -webkit-appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 14px; width: 14px; border-radius: 50%; margin-top: -6px; cursor: pointer; background: #fff; border: 2px solid #4f46e5; }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 3px; background: #334155; border-radius: 2px; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        
+        /* Error Console */
+        #debugConsole { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 100; padding: 20px; font-family: monospace; color: #f87171; overflow: auto; }
+    </style>
+
+    <!-- ROBUST IMPORT MAP -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.168.0/examples/jsm/",
+            "three-mesh-bvh": "https://unpkg.com/three-mesh-bvh@0.7.3/build/index.module.js",
+            "three-bvh-csg": "https://unpkg.com/three-bvh-csg@0.0.17/build/index.module.js"
+        }
+    }
+    </script>
+    
+    <!-- Error Handler -->
+    <script>
+        window.onerror = function(msg, url, line, col, error) {
+            const d = document.getElementById('debugConsole');
+            d.style.display = 'block';
+            d.innerHTML += `<div style="margin-bottom:10px; border-bottom:1px solid #333; padding-bottom:5px;">
+                <strong style="color:red">ERROR:</strong> ${msg}<br>
+                <small style="color:#888">Line: ${line}</small>
+                ${msg.includes("Access-Control") ? "<br><br><strong style='color:white'>FIX: You are running this directly from a file. Browsers block this. Use the 'Netlify Drop' method described in the chat.</strong>" : ""}
+            </div>`;
+        };
+    </script>
+</head>
+<body class="font-sans antialiased text-xs selection:bg-indigo-500 selection:text-white">
+
+    <div id="debugConsole">
+        <h2 class="text-xl font-bold text-white mb-4">⚠️ System Errors Detected</h2>
+    </div>
+
+    <!-- UI -->
+    <div class="absolute top-4 left-4 w-72 glass-panel rounded-xl p-4 z-10 flex flex-col gap-4 max-h-[90vh] overflow-y-auto custom-scroll border border-slate-700">
+        <div class="flex items-center justify-between">
+            <h1 class="font-bold text-base text-white flex items-center gap-2"><span class="text-xl">✂️</span> Large Print Slicer</h1>
+            <div id="fileStatus" class="hidden px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 text-[10px] border border-green-500/30">Loaded</div>
+        </div>
+
+        <!-- UPLOAD -->
+        <div class="relative group h-16 flex-shrink-0">
+            <input type="file" id="fileInput" accept=".stl" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20">
+            <div class="border-2 border-dashed border-slate-600 rounded-lg h-full flex flex-col items-center justify-center text-center group-hover:border-indigo-500 group-hover:bg-slate-800/50 transition-all bg-slate-900/30">
+                <span class="text-indigo-400 font-semibold mb-0.5">Upload STL File</span>
+                <span id="fileNameDisplay" class="text-[10px] text-slate-400 max-w-[90%] truncate">Click to browse</span>
+            </div>
+        </div>
+
+        <!-- RESIZE -->
+        <div id="resizeSection" class="hidden flex flex-col gap-2 p-3 bg-slate-900/40 rounded-lg border border-slate-700/50">
+            <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Scale / Target Size</div>
+            <div class="text-[10px] text-slate-500 font-mono mb-1 flex justify-between"><span>Current Height:</span><span id="currHeightDisplay" class="text-slate-200">0 mm</span></div>
+            <div class="flex gap-2 items-end">
+                <div class="flex-1"><label class="text-[9px] text-slate-500 block mb-1">Target Height</label><input type="number" id="targetHeight" class="input-dark w-full" placeholder="0"></div>
+                <div class="w-16"><label class="text-[9px] text-slate-500 block mb-1">Unit</label><select id="targetUnit" class="input-dark w-full h-[26px] py-0 px-1 cursor-pointer"><option value="mm">mm</option><option value="cm">cm</option><option value="in">in</option><option value="ft">ft</option></select></div>
+                <button id="applyScaleBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold px-3 py-1.5 rounded h-[26px] transition-colors shadow-lg">Resize</button>
+            </div>
+            <div id="resizeStatus" class="text-[9px] text-green-400 text-right hidden">✅ Scaled</div>
+        </div>
+
+        <!-- CONTROLS -->
+        <div id="sliceControls" class="hidden flex flex-col gap-3">
+            <div id="uiAuto" class="flex flex-col gap-3">
+                <div class="text-[10px] text-slate-400">Scale model above, set printer below.</div>
+                <div id="inputsPrinter" class="grid grid-cols-3 gap-2">
+                    <div><label class="text-[9px] text-red-400 font-bold block mb-1">Print X</label><input type="number" id="printX" value="220" class="input-dark w-full"></div>
+                    <div><label class="text-[9px] text-green-400 font-bold block mb-1">Print Y</label><input type="number" id="printY" value="220" class="input-dark w-full"></div>
+                    <div><label class="text-[9px] text-blue-400 font-bold block mb-1">Print Z</label><input type="number" id="printZ" value="250" class="input-dark w-full"></div>
+                </div>
+                <div class="bg-indigo-500/10 border border-indigo-500/20 rounded p-2 flex items-center gap-3">
+                    <div class="text-2xl">📦</div>
+                    <div><div class="text-[10px] text-indigo-200 font-bold">Estimated Result</div><div id="gridPreviewText" class="text-[10px] text-indigo-100 font-mono">2 parts total</div></div>
+                </div>
+            </div>
+            <button id="sliceBtn" class="mt-2 w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg flex justify-center items-center gap-2 transition-all">
+                <span class="text-lg">⚡</span><span>Slice Model</span>
+            </button>
+            <div id="statusText" class="text-center text-[10px] text-slate-500 h-4">Ready</div>
+        </div>
+    </div>
+
+    <!-- DOCK -->
+    <div id="downloadDock" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-20 w-full max-w-4xl px-4 flex flex-col items-center gap-3 transition-all duration-500 translate-y-32 opacity-0 pointer-events-none">
+        <div class="bg-indigo-600/90 text-white px-1 pl-4 py-1 rounded-full text-[11px] font-bold shadow-lg border border-indigo-400 flex items-center gap-3 backdrop-blur-md">
+            <span class="flex items-center gap-2">✅ Complete: <span id="partCountLabel" class="text-indigo-200">0 Parts</span></span>
+            <div class="h-4 w-px bg-indigo-400"></div>
+            <button id="downloadZipBtn" class="bg-green-500 hover:bg-green-400 text-white px-3 py-1 rounded-full text-[10px] font-bold transition-all shadow-md flex items-center gap-1 pointer-events-auto cursor-pointer"><span>📁 Download ZIP</span></button>
+        </div>
+    </div>
+
+    <!-- LOAD OVERLAY -->
+    <div id="loader" class="fixed inset-0 bg-slate-900/90 z-50 flex flex-col items-center justify-center hidden">
+        <div class="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+        <div class="text-white font-bold text-lg">Processing...</div>
+    </div>
+
+    <div id="canvas-container" class="w-full h-screen"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+        import { STLExporter } from 'three/addons/exporters/STLExporter.js';
+        import { Brush, Evaluator, INTERSECTION } from 'three-bvh-csg';
+
+        const state = { bounds: null, loaded: false, helpers: [], originalGeo: null, generatedParts: [] };
+        const ui = {
+            fileInput: document.getElementById('fileInput'), fileName: document.getElementById('fileNameDisplay'),
+            resizeSec: document.getElementById('resizeSection'), sliceSec: document.getElementById('sliceControls'),
+            uiAuto: document.getElementById('uiAuto'), gridText: document.getElementById('gridPreviewText'),
+            sliceBtn: document.getElementById('sliceBtn'), dock: document.getElementById('downloadDock'),
+            zipBtn: document.getElementById('downloadZipBtn'), loader: document.getElementById('loader'),
+            currHeight: document.getElementById('currHeightDisplay'),
+            inputs: { px: document.getElementById('printX'), py: document.getElementById('printY'), pz: document.getElementById('printZ') },
+            scaleInputs: { height: document.getElementById('targetHeight'), unit: document.getElementById('targetUnit'), btn: document.getElementById('applyScaleBtn'), status: document.getElementById('resizeStatus') }
+        };
+
+        let scene, camera, renderer, controls, mainMesh;
+
+        try { init(); animate(); } catch(e) { console.error("Init failed", e); }
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene(); scene.background = new THREE.Color(0x0f172a);
+            scene.add(new THREE.GridHelper(5000, 200, 0x1e293b, 0x0f172a));
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+            const dl = new THREE.DirectionalLight(0xffffff, 1.2); dl.position.set(200, 500, 200); scene.add(dl);
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 1, 20000); camera.position.set(300, 300, 400);
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false }); renderer.setPixelRatio(window.devicePixelRatio); renderer.setSize(window.innerWidth, window.innerHeight); container.appendChild(renderer.domElement);
+            controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true;
+
+            window.addEventListener('resize', () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+            ui.fileInput.addEventListener('change', handleUpload);
+            ui.scaleInputs.btn.onclick = applyScale;
+            Object.values(ui.inputs).forEach(inp => inp.addEventListener('input', updateVisuals));
+            ui.sliceBtn.onclick = performSlice;
+            ui.zipBtn.onclick = downloadAllZip;
+        }
+
+        function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
+
+        function handleUpload(e) {
+            const file = e.target.files[0]; if(!file) return;
+            ui.fileName.innerText = "Loading...";
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                try {
+                    const loader = new STLLoader();
+                    const geo = loader.parse(evt.target.result);
+                    loadModel(geo, file.name);
+                } catch(err) { alert("Error parsing STL."); }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function loadModel(geo, name) {
+            if(mainMesh) { scene.remove(mainMesh); mainMesh.geometry.dispose(); }
+            state.helpers.forEach(h => scene.remove(h)); state.helpers = [];
+            
+            geo.rotateX(-Math.PI/2); geo.computeBoundingBox(); geo.center(); geo.computeBoundingBox(); geo.translate(0, -geo.boundingBox.min.y, 0);
+            state.originalGeo = geo.clone();
+            mainMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.6, metalness: 0.2 }));
+            scene.add(mainMesh); state.loaded = true;
+
+            ui.fileName.innerText = name; document.getElementById('fileStatus').classList.remove('hidden');
+            ui.resizeSec.classList.remove('hidden'); ui.sliceSec.classList.remove('hidden');
+            updateBounds(); updateVisuals();
+            
+            // Reset Camera
+            const sz = Math.max(state.bounds.size.x, state.bounds.size.y, state.bounds.size.z);
+            camera.position.set(sz*2, sz*2, sz*2); controls.target.copy(state.bounds.center);
+        }
+
+        function updateBounds() {
+            if(!mainMesh) return;
+            mainMesh.geometry.computeBoundingBox();
+            const b = mainMesh.geometry.boundingBox;
+            state.bounds = { min: b.min, max: b.max, size: new THREE.Vector3().subVectors(b.max, b.min), center: new THREE.Vector3().addVectors(b.min, b.max).multiplyScalar(0.5) };
+            ui.currHeight.innerText = `${state.bounds.size.y.toFixed(1)} mm`;
+        }
+
+        function applyScale() {
+            if(!state.originalGeo) return;
+            const val = parseFloat(ui.scaleInputs.height.value); if(!val) return;
+            const unit = ui.scaleInputs.unit.value;
+            let mm = val * (unit==='cm'?10 : unit==='in'?25.4 : unit==='ft'?304.8 : 1);
+            
+            state.originalGeo.computeBoundingBox();
+            const currentH = state.originalGeo.boundingBox.max.y - state.originalGeo.boundingBox.min.y;
+            const scale = mm / currentH;
+            
+            const newGeo = state.originalGeo.clone(); newGeo.scale(scale, scale, scale);
+            newGeo.computeBoundingBox(); newGeo.translate(0, -newGeo.boundingBox.min.y, 0);
+            
+            mainMesh.geometry.dispose(); mainMesh.geometry = newGeo;
+            ui.scaleInputs.status.classList.remove('hidden'); setTimeout(()=>ui.scaleInputs.status.classList.add('hidden'), 2000);
+            updateBounds(); updateVisuals();
+        }
+
+        function updateVisuals() {
+            if(!state.loaded) return;
+            state.helpers.forEach(h => scene.remove(h)); state.helpers = [];
+            const b = state.bounds;
+            const px = parseFloat(ui.inputs.px.value)||220, py = parseFloat(ui.inputs.py.value)||220, pz = parseFloat(ui.inputs.pz.value)||250;
+            const cx = Math.ceil(b.size.x/px), cy = Math.ceil(b.size.z/py), cz = Math.ceil(b.size.y/pz);
+            ui.gridText.innerText = `${cx}x${cy}x${cz} Grid (${cx*cy*cz} Parts)`;
+
+            const drawP = (axis, val, color) => {
+                const sz = Math.max(b.size.x, b.size.y, b.size.z)*1.5;
+                const m = new THREE.Mesh(new THREE.PlaneGeometry(sz, sz), new THREE.MeshBasicMaterial({ color: color, side: 2, transparent: true, opacity: 0.15, depthWrite: false }));
+                const e = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry), new THREE.LineBasicMaterial({ color: color, transparent: true, opacity: 0.5 })); m.add(e);
+                if(axis==='x') { m.rotation.y = Math.PI/2; m.position.set(val, b.center.y, b.center.z); }
+                else if(axis==='y') { m.position.set(b.center.x, b.center.y, val); }
+                else { m.rotation.x = Math.PI/2; m.position.set(b.center.x, val, b.center.z); }
+                scene.add(m); state.helpers.push(m);
+            };
+
+            for(let i=1; i<cx; i++) drawP('x', b.min.x+(i*(b.size.x/cx)), 0xf87171);
+            for(let i=1; i<cy; i++) drawP('y', b.min.z+(i*(b.size.z/cy)), 0x4ade80);
+            for(let i=1; i<cz; i++) drawP('z', b.min.y+(i*(b.size.y/cz)), 0x60a5fa);
+        }
+
+        async function performSlice() {
+            if(!mainMesh) return;
+            ui.loader.classList.remove('hidden'); ui.sliceBtn.disabled = true;
+            await new Promise(r => setTimeout(r, 100));
+
+            try {
+                const b = state.bounds;
+                const px = parseFloat(ui.inputs.px.value)||220, py = parseFloat(ui.inputs.py.value)||220, pz = parseFloat(ui.inputs.pz.value)||250;
+                const cx = Math.ceil(b.size.x/px), cy = Math.ceil(b.size.z/py), cz = Math.ceil(b.size.y/pz);
+                
+                let cutsX=[b.min.x], cutsY=[b.min.z], cutsZ=[b.min.y];
+                for(let i=1; i<=cx; i++) cutsX.push(b.min.x+(i*(b.size.x/cx)));
+                for(let i=1; i<=cy; i++) cutsY.push(b.min.z+(i*(b.size.z/cy)));
+                for(let i=1; i<=cz; i++) cutsZ.push(b.min.y+(i*(b.size.y/cz)));
+
+                const evaluator = new Evaluator(); evaluator.attributes = ['position', 'normal'];
+                const modelBrush = new Brush(mainMesh.geometry); modelBrush.updateMatrixWorld();
+                
+                state.generatedParts = [];
+                const total = cx*cy*cz;
+                if(total > 40 && !confirm(`Create ${total} parts?`)) throw "Cancelled";
+
+                for(let i=0; i<cx; i++) {
+                    for(let j=0; j<cy; j++) {
+                        for(let k=0; k<cz; k++) {
+                            const w = cutsX[i+1]-cutsX[i], d = cutsY[j+1]-cutsY[j], h = cutsZ[k+1]-cutsZ[k];
+                            const cutter = new Brush(new THREE.BoxGeometry(w, h, d));
+                            cutter.position.set(cutsX[i]+w/2, cutsZ[k]+h/2, cutsY[j]+d/2); cutter.updateMatrixWorld();
+                            const res = evaluator.evaluate(modelBrush, cutter, INTERSECTION);
+                            if(res.geometry.attributes.position.count > 0) {
+                                state.generatedParts.push({ name: `Part_${i+1}-${j+1}-${k+1}`, brush: res });
+                            }
+                        }
+                    }
+                }
+                
+                mainMesh.visible = false; state.helpers.forEach(h=>h.visible=false);
+                const colors = [0xef4444, 0x3b82f6, 0x22c55e, 0xf59e0b];
+                state.generatedParts.forEach((p, idx) => {
+                    const m = new THREE.Mesh(p.brush.geometry, new THREE.MeshStandardMaterial({ color: colors[idx%4], roughness: 0.5 }));
+                    const c = new THREE.Vector3(); m.geometry.computeBoundingBox(); m.geometry.boundingBox.getCenter(c);
+                    m.position.copy(c.sub(state.bounds.center).normalize().multiplyScalar(10));
+                    scene.add(m);
+                });
+
+                document.getElementById('partCountLabel').innerText = `${state.generatedParts.length} Parts`;
+                ui.dock.classList.remove('translate-y-32', 'opacity-0', 'pointer-events-none');
+
+            } catch(e) { alert("Error: " + e); }
+            finally { ui.loader.classList.add('hidden'); ui.sliceBtn.disabled = false; }
+        }
+
+        function downloadAllZip() {
+            if(state.generatedParts.length === 0) return;
+            const zip = new JSZip();
+            const folder = zip.folder("Sliced_Parts");
+            const exporter = new STLExporter();
+            
+            ui.zipBtn.innerText = "Zipping...";
+            
+            setTimeout(() => {
+                state.generatedParts.forEach(p => {
+                    const geo = p.brush.geometry.clone();
+                    if(geo.attributes.uv) geo.deleteAttribute('uv');
+                    if(geo.attributes.color) geo.deleteAttribute('color');
+                    folder.file(`${p.name}.stl`, exporter.parse(new THREE.Mesh(geo), { binary: true }));
+                });
+                zip.generateAsync({type:"blob"}).then(c => {
+                    const link = document.createElement('a'); link.href = URL.createObjectURL(c); link.download = "sliced_models.zip"; link.click();
+                    ui.zipBtn.innerText = "📁 Download All (ZIP)";
+                });
+            }, 100);
+        }
+    </script>
+</body>
+</html>
+
+
